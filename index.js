@@ -31,6 +31,7 @@ import { getStringHash, uuidv4 } from "../../../utils.js";
 import { SlashCommandParser } from "../../../slash-commands/SlashCommandParser.js";
 import { SlashCommand } from "../../../slash-commands/SlashCommand.js";
 import { ARGUMENT_TYPE, SlashCommandArgument } from "../../../slash-commands/SlashCommandArgument.js";
+import { MAX_BOOK_BYTES, parseBook, exportBook, mergeBook } from './book-transfer.mjs';
 
 const MODULE_NAME = 'interpres';
 const PROMPT_REV = 2;
@@ -204,6 +205,83 @@ function isolateBook(store) {
  */
 function getBook() {
     return getStore();
+}
+
+// Retain both the chat ID and metadata object across file reads, dialogs and API calls.
+function captureBook() {
+    const id = currentChatId();
+    if (!id) throw new Error('먼저 채팅방을 열어 주세요.');
+    return { id, book: getBook() };
+}
+
+function assertCurrentBook(owner) {
+    if (currentChatId() !== owner.id || chat_metadata[MODULE_NAME] !== owner.book) {
+        throw new Error('채팅방이 바뀌어 작업을 취소했습니다. 원하는 방에서 다시 실행해 주세요.');
+    }
+}
+
+function downloadBook() {
+    try {
+        const { book } = captureBook();
+        const scope = $('#interp_book_scope').val();
+        const result = exportBook(book, scope);
+        if (!result.count) { toastr.warning('내보낼 완성된 항목이 없습니다.'); return; }
+        const url = URL.createObjectURL(new Blob([result.text], { type: 'application/json' }));
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `interpres-${scope}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toastr.success(`${result.count}개 내보내기${result.skipped ? ` (미완성·중복 ${result.skipped}개 제외)` : ''}`, 'Interpres');
+    } catch (e) { toastr.error(String(e.message || e), '내보내기 실패'); }
+}
+
+let bookImportBusy = false;
+function chooseBookFile() {
+    if (bookImportBusy) return;
+    try {
+        // Capture the destination before opening the native file picker.
+        const owner = captureBook();
+        const scope = $('#interp_book_scope').val();
+        const policy = $('#interp_book_policy').val();
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,application/json';
+        input.addEventListener('change', () => importBookFile(input.files?.[0], owner, scope, policy), { once: true });
+        input.click();
+    } catch (e) { toastr.error(String(e.message || e), '가져오기 실패'); }
+}
+
+async function importBookFile(file, owner, scope, policy) {
+    if (!file || bookImportBusy) return;
+    bookImportBusy = true;
+    try {
+        if (file.size > MAX_BOOK_BYTES) throw new Error('파일은 5MB까지 지원합니다.');
+        const incoming = parseBook(await file.text());
+        assertCurrentBook(owner);
+        const before = JSON.stringify([owner.book.glossary, owner.book.voiceCards]);
+        const merged = mergeBook(owner.book, incoming, scope, policy, uuidv4);
+        const { added, updated, skipped } = merged.counts;
+        if (!added && !updated) { toastr.info(`변경할 항목이 없습니다. (중복 ${skipped}개 제외)`); return; }
+        const ok = await callGenericPopup(
+            `현재 채팅방에 추가 ${added}개 · 갱신 ${updated}개 · 건너뛰기 ${skipped}개를 적용할까요? 기존 목록에 합치며, 파일에 없는 항목은 유지합니다.`,
+            POPUP_TYPE.CONFIRM,
+        );
+        if (!ok) return;
+        assertCurrentBook(owner);
+        if (before !== JSON.stringify([owner.book.glossary, owner.book.voiceCards])) {
+            throw new Error('확인 중 목록이 수정되었습니다. 최신 목록을 기준으로 다시 가져와 주세요.');
+        }
+        owner.book.glossary = merged.glossary;
+        owner.book.voiceCards = merged.voiceCards;
+        renderGlossary();
+        renderVoiceCards();
+        await persistBook();
+        toastr.success(`추가 ${added}개 · 갱신 ${updated}개 · 건너뛰기 ${skipped}개`, '가져오기 완료');
+    } catch (e) { toastr.error(String(e.message || e), '가져오기 실패'); }
+    finally { bookImportBusy = false; }
 }
 
 /**
@@ -1273,12 +1351,15 @@ function parseJsonLoose(text) {
 }
 
 async function scanVoiceCards() {
+    let owner;
+    try { owner = captureBook(); } catch (e) { toastr.warning(e.message); return; }
     const material = collectScanMaterial();
     if (!material.trim()) { toastr.warning('스캔할 캐릭터/대화 자료가 없습니다.'); return; }
     toastr.info('말투를 분석하는 중…', 'Interpres');
     try {
         // 스캔은 JSON 한 덩이를 받아야 하므로 프리필을 태우지 않는다
         const raw = await callTranslator(VOICE_SCAN_PROMPT, material, { maxTokens: 2048, usePrefill: false });
+        assertCurrentBook(owner);
         const json = parseJsonLoose(raw);
         const voices = Array.isArray(json?.voices) ? json.voices : [];
         if (!voices.length) { toastr.warning('말투를 추출하지 못했습니다.'); return; }
@@ -1302,6 +1383,8 @@ async function scanVoiceCards() {
 }
 
 async function scanGlossary() {
+    let owner;
+    try { owner = captureBook(); } catch (e) { toastr.warning(e.message); return; }
     const s = getSettings();
     const material = collectScanMaterial();
     if (!material.trim()) { toastr.warning('스캔할 캐릭터/대화 자료가 없습니다.'); return; }
@@ -1309,6 +1392,7 @@ async function scanGlossary() {
     try {
         const sys = `${TERM_SCAN_PROMPT}\n\nTarget language: ${langName(s.viewLang)}.`;
         const raw = await callTranslator(sys, material, { maxTokens: 2048, usePrefill: false });
+        assertCurrentBook(owner);
         const json = parseJsonLoose(raw);
         const terms = Array.isArray(json?.terms) ? json.terms : [];
         if (!terms.length) { toastr.warning('용어를 추출하지 못했습니다.'); return; }
@@ -1553,6 +1637,8 @@ function bindUI() {
     });
 
     // 딸려온 목록 격리 안내
+    $('#interp_book_export').on('click', downloadBook);
+    $('#interp_book_import').on('click', chooseBookFile);
     $(document).on('click', '#interp_carry_import', importCarry);
     $(document).on('click', '#interp_carry_drop', dropCarry);
 

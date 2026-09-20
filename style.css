@@ -262,6 +262,17 @@
 
 /* ---------- 모바일 ---------- */
 
+.interp__transfer {
+    border: 1px solid var(--interp-border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+}
+.interp__transfer h4 { margin: 0 0 6px; }
+.interp__transfer p { font-size: 0.85em; opacity: 0.8; }
+.interp__transfer select { width: 100%; margin-top: 4px; }
+.interp__transfer .interp__actions { margin-top: 10px; flex-wrap: wrap; }
+
 @media (max-width: 600px) {
     .interp__grid2 { grid-template-columns: 1fr; }
     .interp__tab span { display: none; }
