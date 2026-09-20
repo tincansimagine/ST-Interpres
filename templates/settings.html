@@ -1,7 +1,7 @@
 <div id="interp_settings" class="interp">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b><i class="fa-solid fa-earth-asia"></i> Interpres — 이야기 통역사 <span class="interp__version">v1.3.0</span></b>
+            <b><i class="fa-solid fa-earth-asia"></i> Interpres — 이야기 통역사 <span class="interp__version">v1.4.0</span></b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
@@ -106,6 +106,30 @@
 
             <!-- ===== 용어·말투 ===== -->
             <section class="interp__panel" data-panel="style">
+                <div class="interp__transfer">
+                    <h4>다른 채팅방으로 옮기기</h4>
+                    <p>이 방에서 JSON 파일로 내보낸 뒤, 원하는 방을 열어 가져오세요. 용어와 말투만 담습니다.</p>
+                    <div class="interp__grid2">
+                        <label>옮길 항목
+                            <select id="interp_book_scope" class="text_pole">
+                                <option value="all">용어 + 말투</option>
+                                <option value="glossary">용어만</option>
+                                <option value="voiceCards">말투만</option>
+                            </select>
+                        </label>
+                        <label>가져올 때 같은 원문·이름이 있으면
+                            <select id="interp_book_policy" class="text_pole">
+                                <option value="keep">이 방의 기존 내용 유지</option>
+                                <option value="update">파일의 내용으로 갱신</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="interp__actions">
+                        <button type="button" class="menu_button" id="interp_book_export"><i class="fa-solid fa-upload"></i><span>파일 내보내기</span></button>
+                        <button type="button" class="menu_button" id="interp_book_import"><i class="fa-solid fa-download"></i><span>파일 가져오기</span></button>
+                    </div>
+                    <p>가져오기 전에 변경 개수를 확인합니다. 기존 번역에 적용하려면 해당 메시지의 재번역을 누르세요.</p>
+                </div>
                 <div id="interp_carry_notice" style="display:none;"></div>
                 <div class="interp__section-head">
                     <div>
