@@ -22,6 +22,7 @@ import {
     substituteParams,
     updateMessageBlock,
     reloadCurrentChat,
+    getRequestHeaders,
 } from "../../../../script.js";
 import { extension_settings, getContext, saveMetadataDebounced } from "../../../extensions.js";
 import { oai_settings } from "../../../openai.js";
@@ -32,6 +33,7 @@ import { SlashCommandParser } from "../../../slash-commands/SlashCommandParser.j
 import { SlashCommand } from "../../../slash-commands/SlashCommand.js";
 import { ARGUMENT_TYPE, SlashCommandArgument } from "../../../slash-commands/SlashCommandArgument.js";
 import { MAX_BOOK_BYTES, parseBook, exportBook, mergeBook } from './book-transfer.mjs';
+import { requestReverseProxy } from './reverse-proxy.mjs';
 
 const MODULE_NAME = 'interpres';
 const PROMPT_REV = 2;
@@ -71,11 +73,12 @@ const DEFAULT_SETTINGS = {
     glossary: [],            // (구버전 전역 저장분) — 보관만 한다. 번역엔 절대 안 쓰이고, 패널에서 직접 [가져오기] 해야 챗방으로 들어온다
     voiceCards: [],          // (구버전 전역 저장분) — 위와 동일
     // 번역 모델 연결
-    apiMode: 'current',      // current | profile | custom
+    apiMode: 'current',      // current | profile | custom | proxy
     profileId: '',
     responseTokens: 8192,
     prefill: '',             // 번역가의 첫 마디를 미리 채워 넣는다 (필터로 빈 응답이 올 때)
     customApi: { url: '', key: '', model: '', temperature: 0.3, timeoutSec: 120 },
+    reverseProxy: { provider: 'openai', url: '', key: '', model: '', temperature: 0.3, timeoutSec: 120 },
 };
 
 function getSettings() {
@@ -88,6 +91,9 @@ function getSettings() {
     }
     for (const key of Object.keys(DEFAULT_SETTINGS.customApi)) {
         if (s.customApi[key] === undefined) s.customApi[key] = DEFAULT_SETTINGS.customApi[key];
+    }
+    for (const key of Object.keys(DEFAULT_SETTINGS.reverseProxy)) {
+        if (s.reverseProxy[key] === undefined) s.reverseProxy[key] = DEFAULT_SETTINGS.reverseProxy[key];
     }
     return s;
 }
@@ -709,6 +715,13 @@ async function callDirectApi(systemPrompt, userPrompt, tokens, usePrefill = true
 async function callTranslator(systemPrompt, userPrompt, { maxTokens, usePrefill = true } = {}) {
     const settings = getSettings();
     const tokens = maxTokens || settings.responseTokens;
+
+    if (settings.apiMode === 'proxy') {
+        return await requestReverseProxy(
+            settings.reverseProxy, systemPrompt, userPrompt, tokens,
+            usePrefill ? String(settings.prefill || '') : '', getRequestHeaders(),
+        );
+    }
 
     if (settings.apiMode === 'custom') {
         return await callDirectApi(systemPrompt, userPrompt, tokens, usePrefill);
@@ -1554,6 +1567,10 @@ function syncUIFromSettings() {
     $('#interp_api_temp').val(s.customApi.temperature);
     $('.interp__custom-api').toggle(s.apiMode === 'custom');
     $('.interp__profile-row').toggle(s.apiMode === 'profile');
+    $('.interp__proxy-api').toggle(s.apiMode === 'proxy');
+    for (const field of ['provider', 'url', 'key', 'model', 'temperature', 'timeoutSec']) {
+        $(`#interp_proxy_${field}`).val(s.reverseProxy[field]);
+    }
     refreshProfileOptions();
     renderGlossary();
     renderVoiceCards();
@@ -1609,6 +1626,7 @@ function bindUI() {
         s().apiMode = this.value; save();
         $('.interp__custom-api').toggle(this.value === 'custom');
         $('.interp__profile-row').toggle(this.value === 'profile');
+        $('.interp__proxy-api').toggle(this.value === 'proxy');
         if (this.value === 'profile') refreshProfileOptions();
     });
     $('#interp_profile').on('change', function () { s().profileId = this.value; save(); });
@@ -1618,6 +1636,30 @@ function bindUI() {
     $('#interp_api_key').on('change', function () { s().customApi.key = this.value.trim(); save(); });
     $('#interp_api_model').on('change', function () { s().customApi.model = this.value.trim(); save(); });
     $('#interp_api_temp').on('change', function () { s().customApi.temperature = Number(this.value); save(); });
+    for (const field of ['provider', 'url', 'key', 'model', 'temperature', 'timeoutSec']) {
+        $(`#interp_proxy_${field}`).on('change', function () {
+            const numeric = field === 'temperature' || field === 'timeoutSec';
+            s().reverseProxy[field] = numeric ? Number(this.value) : this.value.trim();
+            save();
+        });
+    }
+    $('#interp_proxy_copy').on('click', function () {
+        const provider = oai_settings.chat_completion_source;
+        const modelField = { openai: 'openai_model', claude: 'claude_model', makersuite: 'google_model' }[provider];
+        if (!modelField || !oai_settings.reverse_proxy) {
+            toastr.warning('SillyTavern의 OpenAI·Claude·Gemini 연결에 리버스 프록시가 설정되어 있어야 합니다.');
+            return;
+        }
+        Object.assign(s().reverseProxy, {
+            provider, url: oai_settings.reverse_proxy, key: oai_settings.proxy_password || '',
+            model: oai_settings[modelField] || '',
+        });
+        for (const field of ['provider', 'url', 'key', 'model']) {
+            $(`#interp_proxy_${field}`).val(s().reverseProxy[field]);
+        }
+        save();
+        toastr.success('현재 프록시 설정을 복사했습니다. 연결 테스트로 확인하세요.');
+    });
 
     $('#interp_api_test').on('click', async function () {
         const $btn = $(this).addClass('disabled');
