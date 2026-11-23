@@ -22,8 +22,7 @@ export function mediaSealPatterns() {
 }
 
 /** 번역하면 안 되는 조각을 <seal-N/>으로 치환하고 금고에 보관 */
-export function sealWith(text, patterns) {
-    const vault = [];
+export function sealWith(text, patterns, vault = []) {
     let out = String(text ?? '');
     for (const rx of patterns) {
         out = out.replace(rx, (m) => {

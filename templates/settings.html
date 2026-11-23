@@ -1,7 +1,7 @@
 <div id="interp_settings" class="interp">
     <div class="inline-drawer">
         <div class="inline-drawer-toggle inline-drawer-header">
-            <b><i class="fa-solid fa-earth-asia"></i> Interpres — 이야기 통역사 <span class="interp__version">v1.5.0</span></b>
+            <b><i class="fa-solid fa-earth-asia"></i> Interpres — 이야기 통역사 <span class="interp__version">v1.6.0</span></b>
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
@@ -271,6 +271,28 @@
                     <span>번역 기억(캐시) 사용 <small>같은 문단은 다시 번역하지 않음 — 수정·스와이프 시 비용 절감</small></span>
                 </label>
                 <label class="checkbox_label">
+                    <input type="checkbox" id="interp_code_blocks">
+                    <span>코드블록 속 글도 번역 <small>상태창·폰 화면 같은 블록의 글만 번역하고, HTML 틀과 진짜 코드(js·python 등)는 그대로 둡니다</small></span>
+                </label>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="interp_code_toggles">
+                    <span>블록마다 원문/번역 고르기 <small>번역된 코드블록 위에 작은 전환 단추</small></span>
+                </label>
+                <label class="checkbox_label">
+                    <input type="checkbox" id="interp_input_button">
+                    <span>입력창 번역 단추 <small>보내기 단추 옆. 번역한 뒤 한 번 더 누르면 되돌립니다</small></span>
+                </label>
+                <div class="interp__grid2">
+                    <div class="interp__field">
+                        <label for="interp_chunk_chars">나눠 번역할 길이 <small>이보다 긴 메시지는 문단 경계에서 나눔 (글자)</small></label>
+                        <input type="number" id="interp_chunk_chars" class="text_pole" min="1500" max="20000" step="500">
+                    </div>
+                    <div class="interp__field">
+                        <label for="interp_concurrency">동시 요청 <small>한 번에 하나만 받는 프록시면 1</small></label>
+                        <input type="number" id="interp_concurrency" class="text_pole" min="1" max="6" step="1">
+                    </div>
+                </div>
+                <label class="checkbox_label">
                     <input type="checkbox" id="interp_seal_macros">
                     <span>{{매크로}} 봉인 <small>매크로 구문을 번역에서 보호</small></span>
                 </label>
@@ -287,8 +309,8 @@
                     <input type="text" id="interp_seal_tags" class="text_pole" placeholder="예: status, statusbar, style">
                 </div>
                 <div class="interp__hint">
-                    코드 블록·이미지·URL·HTML 주석은 항상 자동으로 봉인됩니다.
-                    상태창처럼 번역하면 안 되는 커스텀 태그가 있다면 위에 태그명을 적어주세요.
+                    그림·URL·HTML 주석·진짜 코드는 항상 자동으로 봉인됩니다.
+                    통째로 번역하지 말아야 할 커스텀 태그가 있다면 위에 태그명을 적어주세요.
                 </div>
 
                 <div class="interp__section-head">
@@ -315,18 +337,23 @@
             <section class="interp__panel" data-panel="tools">
                 <div class="interp__tools">
                     <div class="menu_button" id="interp_translate_input" title="입력창의 글을 모델어로 번역해 바꿔넣습니다.">
-                        <i class="fa-solid fa-keyboard"></i><span>입력창 번역</span>
+                        <i class="fa-solid fa-keyboard"></i><span>입력창</span>
                     </div>
                     <div class="menu_button" id="interp_batch" title="아직 번역되지 않은 AI 응답을 전부 번역합니다.">
-                        <i class="fa-solid fa-layer-group"></i><span>채팅 전체 번역</span>
+                        <i class="fa-solid fa-layer-group"></i><span>전체 번역</span>
+                    </div>
+                    <div class="menu_button" id="interp_batch_cancel" style="display:none" title="일괄 번역을 멈춥니다. 끝난 메시지는 그대로 남습니다.">
+                        <i class="fa-solid fa-stop"></i><span>멈춤</span>
                     </div>
                     <div class="menu_button" id="interp_clear_display" title="이 채팅의 번역 표시를 모두 지웁니다. 원문은 그대로입니다.">
-                        <i class="fa-solid fa-broom"></i><span>번역 표시 지우기</span>
+                        <i class="fa-solid fa-broom"></i><span>표시 지우기</span>
                     </div>
                     <div class="menu_button" id="interp_clear_cache" title="이 채팅의 번역 기억(캐시)을 비웁니다.">
                         <i class="fa-solid fa-eraser"></i><span>캐시 비우기</span>
                     </div>
                 </div>
+                <div id="interp_batch_progress" class="interp__stats" aria-live="polite"></div>
+                <div id="interp_jobs"></div>
                 <div class="interp__field">
                     <label>이 채팅의 번역 통계</label>
                     <div id="interp_stats" class="interp__stats">—</div>

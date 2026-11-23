@@ -33,11 +33,14 @@ export function buildProxyRequest(cfg, systemPrompt, userPrompt, tokens, prefill
     };
 }
 
-export async function requestReverseProxy(cfg, systemPrompt, userPrompt, tokens, prefill, headers, fetchFn = fetch) {
+export async function requestReverseProxy(cfg, systemPrompt, userPrompt, tokens, prefill, headers, fetchFn = fetch, signal = null) {
     cfg = { ...cfg };
     const body = buildProxyRequest(cfg, systemPrompt, userPrompt, tokens, prefill);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Math.max(10, Number(cfg.timeoutSec) || 120) * 1000);
+    // 번역을 취소하면 프록시 요청도 끊는다 — 한 번에 하나만 받는 프록시가 취소한 요청에 붙잡히지 않게
+    const relay = () => controller.abort();
+    if (signal?.aborted) relay(); else signal?.addEventListener('abort', relay, { once: true });
     try {
         const response = await fetchFn('/api/backends/chat-completions/generate', {
             method: 'POST', headers, signal: controller.signal, body: JSON.stringify(body),
@@ -58,7 +61,10 @@ export async function requestReverseProxy(cfg, systemPrompt, userPrompt, tokens,
         }
         return content;
     } catch (e) {
-        if (e.name === 'AbortError') throw new Error('프록시 응답 대기 시간이 초과되었습니다. 잠시 후 다시 시도하세요.');
+        if (e.name === 'AbortError') {
+            if (signal?.aborted) throw Object.assign(new Error('번역을 취소했습니다.'), { name: 'AbortError' });
+            throw new Error('프록시 응답 대기 시간이 초과되었습니다. 잠시 후 다시 시도하세요.');
+        }
         throw e;
-    } finally { clearTimeout(timeout); }
+    } finally { clearTimeout(timeout); signal?.removeEventListener('abort', relay); }
 }

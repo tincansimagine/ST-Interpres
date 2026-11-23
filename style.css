@@ -280,3 +280,49 @@
     .interp__section-head { flex-direction: column; }
     .interp__tools { grid-template-columns: 1fr 1fr; }
 }
+
+/* ============================================================
+   번역 작업 표시 · 코드블록 고르기 · 입력창 단추
+   (모두 메시지 안이나 입력창 옆 — 설정 패널 밖이라 테마 변수만 쓴다)
+   ============================================================ */
+.interp-job {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 4px 0 6px; padding: 4px 8px; border-radius: 8px; font-size: 0.82em; line-height: 1.4;
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 8%, transparent);
+    min-width: 0; max-width: 100%; box-sizing: border-box;
+}
+.interp-job__bar { flex: 1 1 80px; min-width: 60px; height: 4px; border-radius: 2px; overflow: hidden;
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 18%, transparent); }
+.interp-job__bar i { display: block; height: 100%; width: 0; background: var(--SmartThemeQuoteColor, #7aa); transition: width .25s; }
+.interp-job__text { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; opacity: .85; }
+.interp-job__act { flex: none; font: inherit; color: inherit; cursor: pointer; padding: 1px 10px; border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #888) 35%, transparent); background: none; white-space: nowrap; }
+.interp-job[data-state="failed"] .interp-job__bar i { background: #d06a5a; }
+.interp-job[data-state="cancelled"] .interp-job__bar i { opacity: .4; }
+@media (prefers-reduced-motion: reduce) { .interp-job__bar i { transition: none; } }
+
+.ip-cb, .custom-ip-cb { display: flex; justify-content: flex-end; margin: 6px 0 -2px; min-height: 0; }
+.ip-cb:empty, .custom-ip-cb:empty { display: none; }
+.interp-cb { display: inline-flex; border-radius: 999px; overflow: hidden; font-size: 0.72em; line-height: 1;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeBodyColor, #888) 30%, transparent); }
+.interp-cb button { font: inherit; color: inherit; background: none; border: 0; padding: 4px 10px; cursor: pointer; opacity: .6; white-space: nowrap; }
+.interp-cb button.is-on { opacity: 1; font-weight: 600; background: color-mix(in srgb, var(--SmartThemeBodyColor, #888) 16%, transparent); }
+
+#interp_composer { display: flex; align-items: center; justify-content: center; cursor: pointer; opacity: .75; padding: 0 4px; }
+#interp_composer:hover, #interp_composer:focus-visible { opacity: 1; }
+#interp_composer.is-busy { opacity: 1; }
+
+.interp-compare { text-align: left; display: grid; gap: 6px; }
+.interp-compare h3 { margin: 0 0 4px; }
+.interp-compare label { font-weight: 600; overflow-wrap: anywhere; }
+.interp-compare label small { display: block; font-weight: 400; opacity: .7; }
+.interp-compare textarea { width: 100%; box-sizing: border-box; min-width: 0; resize: vertical; }
+#interp_jobs:empty, #interp_batch_progress:empty { display: none; }
+
+/* 체크박스 줄 — 테마가 .checkbox_label을 어떻게 두든 한 줄에 하나씩, 설명은 이름 아래로 */
+#interp_settings .checkbox_label { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; min-width: 0; }
+#interp_settings .checkbox_label > input { flex: none; margin-top: 0.3em; }
+#interp_settings .checkbox_label > span { min-width: 0; overflow-wrap: anywhere; }
+#interp_settings .checkbox_label > span small { display: block; opacity: 0.7; line-height: 1.45; }
+#interp_settings .interp__field label small { display: block; opacity: 0.7; font-weight: 400; overflow-wrap: anywhere; }
+#interp_settings .interp__field { min-width: 0; }
