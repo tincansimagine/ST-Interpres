@@ -34,6 +34,7 @@ import { SlashCommand } from "../../../slash-commands/SlashCommand.js";
 import { ARGUMENT_TYPE, SlashCommandArgument } from "../../../slash-commands/SlashCommandArgument.js";
 import { MAX_BOOK_BYTES, parseBook, exportBook, mergeBook } from './book-transfer.mjs';
 import { requestReverseProxy } from './reverse-proxy.mjs';
+import { SEAL_RX, mediaSealPatterns, sealWith, unsealText, displayOnlyMedia, mediaStamp, restoreMedia } from './seal.mjs';
 
 const MODULE_NAME = 'interpres';
 const PROMPT_REV = 2;
@@ -407,11 +408,10 @@ function pruneStore(store) {
  * 봉인 (형식 보호)
  * ============================================================ */
 
-const SEAL_RX = /<\s*seal[-_ ]?(\d+)\s*\/?\s*>/gi;
-
 function buildSealPatterns() {
     const s = getSettings();
     const patterns = [
+        ...mediaSealPatterns(),               // 그림·영상 태그 — 모델이 건드리면 그림이 사라진다
         /```[\s\S]*?```/g,                    // 코드 펜스
         /<!--[\s\S]*?-->/g,                   // HTML 주석
         /!\[[^\]\n]*\]\([^)\n]*\)/g,          // 이미지 마크다운
@@ -428,32 +428,7 @@ function buildSealPatterns() {
 
 /** 번역하면 안 되는 조각을 <seal-N/>으로 치환하고 금고에 보관 */
 function sealText(text) {
-    const vault = [];
-    let out = String(text ?? '');
-    for (const rx of buildSealPatterns()) {
-        out = out.replace(rx, (m) => {
-            const idx = vault.length;
-            vault.push(m);
-            return `<seal-${idx}/>`;
-        });
-    }
-    return { sealed: out, vault };
-}
-
-/** 봉인 복원. 유실된 인덱스 목록을 함께 반환 */
-function unsealText(text, vault) {
-    const used = new Set();
-    const restored = String(text ?? '').replace(SEAL_RX, (m, n) => {
-        const idx = Number(n);
-        if (idx >= 0 && idx < vault.length) {
-            used.add(idx);
-            return vault[idx];
-        }
-        return '';
-    });
-    const missing = [];
-    for (let i = 0; i < vault.length; i++) if (!used.has(i)) missing.push(i);
-    return { restored, missing };
+    return sealWith(text, buildSealPatterns());
 }
 
 /* ============================================================
@@ -1102,9 +1077,19 @@ async function llmTranslate(sys, sealedChunk, srcCode, dstCode, vault, { context
         ({ notes, invalid } = findIssues(out));
     }
 
-    // 봉인 유실은 복원 단계에서 수습하지만, 번역 자체가 아닌 출력은 저장하면 안 된다
+    // 번역 자체가 아닌 출력은 저장하면 안 된다
     if (invalid) {
         throw new Error(`번역 검증 실패 (${invalid}) — 모델이 번역 대신 다른 출력을 반환했습니다. 추론(thinking) 모델이라면 일반 모델로 바꾸거나 응답 토큰 한도를 올려보세요.`);
+    }
+    // 재시도 뒤에도 빠진 봉인(그림·코드 등)은 이 조각 끝에 붙여 둔다 —
+    // 메시지 맨 끝으로 밀려나는 것보다 제 문단 곁에 남는 편이 낫고, 번역 기억에도 온전한 형태로 저장된다.
+    if (sealsIn.length) {
+        const sealsOut = new Set([...out.matchAll(SEAL_RX)].map(m => Number(m[1])));
+        const lost = [...new Set(sealsIn)].filter(n => !sealsOut.has(n));
+        if (lost.length) {
+            console.warn(`[${MODULE_NAME}] 봉인 ${lost.length}개 유실 — 문단 끝에 복원`);
+            out = `${out.replace(/\s+$/, '')}\n${lost.map(n => `<seal-${n}/>`).join('\n')}`;
+        }
     }
     return out;
 }
@@ -1125,7 +1110,7 @@ function setBusyIcon(mesId, busy) {
 }
 
 /** 수신(AI 응답) 메시지 번역: 모델어 → 감상어 */
-async function translateIncoming(mesId, { force = false, fresh = false } = {}) {
+async function translateIncoming(mesId, { force = false, fresh = false, previous = null } = {}) {
     const s = getSettings();
     const message = chat[mesId];
     if (!message || isSwipeGenerating(mesId)) return;
@@ -1156,12 +1141,23 @@ async function translateIncoming(mesId, { force = false, fresh = false } = {}) {
     if (inFlight.has(flightKey)) return;
     inFlight.add(flightKey);
     setBusyIcon(mesId, true);
+    // 번역문에만 얹혀 있던 그림(다른 확장이 화면 쪽에 꽂았거나 대조 창에서 넣은 것)은
+    // 다시 번역해도 따라와야 한다. 지금 붙어 있는 번역, 방금 본문이 바뀌어 떼어 낸 번역,
+    // 원문 보기로 넘기며 맡아 둔 것까지 모아 둔다.
+    const prior = previous || { text: message.extra.display_text, media: message.extra.interpres_media };
+    const keepMedia = [
+        ...displayOnlyMedia(prior.text, prior.media, getStringHash),
+        ...(Array.isArray(message.extra.interpres_keep) ? message.extra.interpres_keep : []),
+    ];
     try {
-        const translated = await translateText(source, s.storyLang, s.viewLang, { mesId: Number(mesId), fresh });
+        let translated = await translateText(source, s.storyLang, s.viewLang, { mesId: Number(mesId), fresh });
         // 번역 도중 본문이 바뀌었으면(스와이프 등) 폐기
         if (String(chat[mesId]?.mes || '') !== source) return;
+        translated = restoreMedia(translated, keepMedia, source);
         message.extra.display_text = translated;
         message.extra.interpres_src = getStringHash(source);   // 이 번역이 어느 원문의 것인지
+        message.extra.interpres_media = mediaStamp(source, getStringHash); // 원문에 있던 그림 (화면에만 있는 그림과 구분)
+        delete message.extra.interpres_keep;
         updateMessageBlock(Number(mesId), message);
 
         if (s.translateReasoning && message.extra.reasoning) {
@@ -1214,6 +1210,9 @@ async function toggleOrTranslate(mesId) {
     const message = chat[mesId];
     if (!message) return;
     if (message.extra?.display_text) {
+        // 번역문에만 있던 그림은 맡아 뒀다가, 다시 번역을 켤 때 돌려놓는다
+        const keep = displayOnlyMedia(message.extra.display_text, message.extra.interpres_media, getStringHash);
+        if (keep.length) message.extra.interpres_keep = keep;
         delete message.extra.display_text;
         if (message.extra.reasoning_display_text) {
             delete message.extra.reasoning_display_text;
@@ -1272,6 +1271,8 @@ async function clearAllTranslations() {
             delete m.extra.reasoning_display_text;
             delete m.extra.interpres_original;
             delete m.extra.interpres_src;
+            delete m.extra.interpres_media;
+            delete m.extra.interpres_keep;
         }
     }
     await getContext().saveChat();
@@ -1786,7 +1787,7 @@ function bindUI() {
         const mesId = Number($(this).closest('.mes').attr('mesid'));
         const message = chat[mesId];
         if (!message) return;
-        if (message.extra?.display_text) delete message.extra.display_text;
+        // 옛 번역을 미리 지우지 않는다 — 실패하면 그대로 남고, 거기에만 있던 그림도 새 번역으로 넘어간다
         await translateIncoming(mesId, { force: true, fresh: true });
     });
 }
@@ -1895,6 +1896,8 @@ function bindEvents() {
             delete m.extra.display_text;
             delete m.extra.interpres_original;
             delete m.extra.interpres_src;
+            delete m.extra.interpres_media;
+            delete m.extra.interpres_keep;   // 다른 답변의 그림을 새 답변에 얹지 않는다
         }
         await translateIncoming(mesId);
     });
@@ -1914,11 +1917,13 @@ function bindEvents() {
 
         // 본문이 실제로 바뀌었다 — 예전 번역도 원문 보기 선택도 의미를 잃는다
         const hadTranslation = Boolean(m.extra.display_text);
+        // 떼어 내기 전에 옛 번역을 넘겨 둔다 — 거기에만 있던 그림을 새 번역에 다시 얹기 위해
+        const previous = { text: m.extra.display_text, media: m.extra.interpres_media };
         delete m.extra.display_text;
         delete m.extra.interpres_original;
         delete m.extra.interpres_src;
         // 자동 번역이 꺼져 있어도, 번역이 붙어 있던 메시지라면 새 본문으로 맞춰준다
-        if (st.autoIn || hadTranslation) await translateIncoming(mesId, { force: !st.autoIn });
+        if (st.autoIn || hadTranslation) await translateIncoming(mesId, { force: !st.autoIn, previous });
     });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
