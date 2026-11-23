@@ -78,6 +78,10 @@ const DEFAULT_SETTINGS = {
     sealMacros: true,        // {{매크로}} 봉인
     sealTags: '',            // 번역에서 통째로 제외할 HTML 태그명 (쉼표 구분)
     readerNote: '',          // 독자 지시문
+    autoGlossary: false,     // 답변이 쌓이면 새 고유명사를 용어집에 덧붙인다
+    autoGlossaryEvery: 10,   // 답변 몇 개마다
+    compareEnabled: false,   // 대조 창에서 다른 모델의 번역과 견줘 보기
+    compareProfileId: '',    // 견줄 모델 (비어 있으면 지금 채팅에 연결된 API)
     promptTemplate: '',      // 커스텀 시스템 프롬프트 (비어 있으면 기본 틀 사용)
     glossary: [],            // (구버전 전역 저장분) — 보관만 한다. 번역엔 절대 안 쓰이고, 패널에서 직접 [가져오기] 해야 챗방으로 들어온다
     voiceCards: [],          // (구버전 전역 저장분) — 위와 동일
@@ -120,14 +124,18 @@ function currentChatId() {
     }
 }
 
+function newStats() {
+    return { calls: 0, hits: 0, chars: 0, sent: 0, got: 0, saved: 0, retries: 0 };
+}
+
 function getStore() {
     if (!chat_metadata[MODULE_NAME]) {
-        chat_metadata[MODULE_NAME] = { v: 1, blocks: {}, wholes: {}, stats: { calls: 0, hits: 0, chars: 0 } };
+        chat_metadata[MODULE_NAME] = { v: 1, blocks: {}, wholes: {}, stats: newStats() };
     }
     const store = chat_metadata[MODULE_NAME];
     if (!store.blocks) store.blocks = {};
     if (!store.wholes) store.wholes = {};
-    if (!store.stats) store.stats = { calls: 0, hits: 0, chars: 0 };
+    if (!store.stats) store.stats = newStats();
     if (!Array.isArray(store.glossary)) store.glossary = [];
     if (!Array.isArray(store.voiceCards)) store.voiceCards = [];
     isolateBook(store);
@@ -537,7 +545,7 @@ function buildSystemPrompt(srcCode, dstCode) {
 }
 
 /** 유저 프롬프트: 작업 노트 + 본문 */
-function buildUserPrompt(sealed, srcCode, dstCode, { contextLines = [], extraNote = '', ownerChatId = null } = {}) {
+function buildUserPrompt(sealed, srcCode, dstCode, { contextLines = [], extraNote = '', ownerChatId = null, tone = 0 } = {}) {
     const s = getSettings();
     const dst = langName(dstCode);
     const parts = [];
@@ -562,7 +570,7 @@ function buildUserPrompt(sealed, srcCode, dstCode, { contextLines = [], extraNot
         parts.push(`[READER'S DIRECTIVE — follow unless it breaks the core rules]\n${note}`);
     }
 
-    parts.push(`[RENDERING DIAL]\n${TONE_DIAL_LINES[s.toneDial] || TONE_DIAL_LINES[3]}`);
+    parts.push(`[RENDERING DIAL]\n${TONE_DIAL_LINES[tone] || TONE_DIAL_LINES[s.toneDial] || TONE_DIAL_LINES[3]}`);
 
     if (extraNote) parts.push(extraNote);
 
@@ -712,10 +720,16 @@ async function callDirectApi(systemPrompt, userPrompt, tokens, usePrefill = true
  * 번역용 LLM 호출. 메인 생성 파이프라인을 점유하지 않아
  * 번역이 도는 중에도 채팅을 계속할 수 있다.
  */
-async function callTranslator(systemPrompt, userPrompt, { maxTokens, usePrefill = true, signal = null } = {}) {
+async function callTranslator(systemPrompt, userPrompt, { maxTokens, usePrefill = true, signal = null, route } = {}) {
     const settings = getSettings();
     const tokens = maxTokens || settings.responseTokens;
     if (signal?.aborted) throw cancelled();
+
+    // 견줄 모델: 번역 모델 설정과 상관없이 지정한 프로필(없으면 지금 연결된 API)로 보낸다
+    if (route !== undefined) {
+        const via = { apiMode: route ? 'profile' : 'current', profileId: route };
+        return await raceAbort(callTranslatorST(via, systemPrompt, userPrompt, tokens, usePrefill), signal);
+    }
 
     if (settings.apiMode === 'proxy') {
         return await requestReverseProxy(
@@ -937,7 +951,7 @@ function bumpStats(field, amount = 1) {
  * 핵심 번역 함수.
  * 1) 봉인 → 2) 메시지 전체 캐시 → 3) 문단 캐시로 부분 재사용 → 4) LLM 호출 → 5) 복원·검증
  */
-async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = false, job = null } = {}) {
+async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = false, job = null, tone = 0 } = {}) {
     const s = getSettings();
     const text = String(rawText ?? '');
     if (!text.trim()) return text;
@@ -955,6 +969,7 @@ async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = fa
     // 메시지 전체 캐시 (재번역 시에는 건너뛴다)
     if (s.cacheEnabled && !fresh && store.wholes[wholeKey]) {
         bumpStats('hits');
+        bumpStats('saved', sealed.length);
         const { restored } = unsealText(store.wholes[wholeKey].t, vault);
         persistStore();
         return restored;
@@ -964,13 +979,13 @@ async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = fa
     job ||= new Job({ checkpoint: partials(store) });
     const checkpoint = job.checkpoint;
     // 재번역(🔄)은 새로 받는 것이므로 예전 조각을 쓰지 않는다. 다만 재번역이 실패해 이어서 할 때는 그 재번역의 조각을 쓴다.
-    const partKey = (chunk) => `${fresh ? 'f:' : ''}${srcCode}>${dstCode}|${fp}|${getStringHash(chunk)}`;
+    const partKey = (chunk) => `${fresh ? 'f:' : ''}${tone ? `t${tone}:` : ''}${srcCode}>${dstCode}|${fp}|${getStringHash(chunk)}`;
     const usedKeys = [];
     const translatePart = (chunk, contextLines) => {
         const key = partKey(chunk);
         usedKeys.push(key);
         return job.part(key, (signal) => requests.run(
-            () => llmTranslate(sys, chunk, srcCode, dstCode, vault, { contextLines, ownerChatId, signal }), signal));
+            () => llmTranslate(sys, chunk, srcCode, dstCode, vault, { contextLines, ownerChatId, signal, tone }), signal));
     };
 
     const blocks = splitBlocks(sealed);
@@ -1002,12 +1017,13 @@ async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = fa
     if (missingIdx.length === 0) {
         // 전 문단 캐시 적중
         bumpStats('hits');
+        bumpStats('saved', sealed.length);
         sealedResult = blocks.map((b, i) => (cached[i] ?? b.text) + b.sep).join('');
     } else if (!cached.some((c, i) => c !== null && store.blocks[blockMeta[i].key]?.edited)
         && (missingIdx.length >= blocks.length * 0.6 || blocks.length <= 3)) {
         // (손으로 고친 문단이 있으면 통째로 다시 하지 않는다 — 고친 문단을 지키고 바뀐 문단만 번역)
         // 대부분 새 내용이면 통째로 (문맥 품질이 가장 좋다). 길면 문단 경계에서 나눠 동시에 보낸다.
-        const chunks = splitChunks(sealed, Math.max(1500, Math.min(20000, Number(s.chunkChars) || 6000)));
+        const chunks = splitChunks(sealed, chunkLimit());
         job.plan(chunks.filter(c => hasTranslatable(c)).length);
         const parts = await runAll(chunks, (chunk, i) => {
             const [, lead, body, tail] = chunk.match(/^(\s*)([\s\S]*?)(\s*)$/);
@@ -1032,6 +1048,7 @@ async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = fa
     } else {
         // 일부 문단만 바뀜: 바뀐 문단만 앞뒤 문맥과 함께 재번역 (비용 절감). 바뀐 문단끼리는 동시에 보낸다.
         const results = blocks.map((b, i) => cached[i] ?? b.text);
+        bumpStats('saved', blocks.reduce((n, b, i) => n + (cached[i] !== null ? b.text.length : 0), 0));
         job.plan(missingIdx.length);
         await runAll(missingIdx, async (i) => {
             const neighbors = [];
@@ -1062,6 +1079,31 @@ async function translateText(rawText, srcCode, dstCode, { mesId = -1, fresh = fa
         return restored + '\n' + missing.map(i => vault[i]).join('\n');
     }
     return restored;
+}
+
+function chunkLimit() {
+    return Math.max(1500, Math.min(20000, Number(getSettings().chunkChars) || 6000));
+}
+
+/**
+ * 견줄 모델로 한 번 번역한다. 번역 기억을 읽지도 쓰지도 않는다 — 고른 쪽만 저장할 때 기억에 들어간다.
+ */
+async function translateAlt(rawText, srcCode, dstCode, { mesId = -1, tone = 0, signal = null } = {}) {
+    const text = String(rawText ?? '');
+    const ownerChatId = currentChatId();
+    const { sealed, vault } = sealText(text);
+    if (!hasTranslatable(sealed)) return text;
+    const sys = buildSystemPrompt(srcCode, dstCode);
+    const contextLines = mesId >= 0 ? collectContextLines(mesId, dstCode) : [];
+    const route = String(getSettings().compareProfileId || '');
+    const parts = await runAll(splitChunks(sealed, chunkLimit()), async (chunk) => {
+        const [, lead, body, tail] = chunk.match(/^(\s*)([\s\S]*?)(\s*)$/);
+        if (!hasTranslatable(body)) return chunk;
+        const out = await requests.run(
+            () => llmTranslate(sys, body, srcCode, dstCode, vault, { contextLines, ownerChatId, signal, tone, route }), signal);
+        return lead + out + tail;
+    });
+    return unsealText(parts.join(''), vault).restored;
 }
 
 /**
@@ -1130,15 +1172,18 @@ function validateRendering(out, sealedChunk, srcCode, dstCode) {
 }
 
 /** LLM 한 번 호출 + 봉인·품질 검증 재시도 */
-async function llmTranslate(sys, sealedChunk, srcCode, dstCode, vault, { contextLines = [], ownerChatId = null, signal = null } = {}) {
+async function llmTranslate(sys, sealedChunk, srcCode, dstCode, vault, { contextLines = [], ownerChatId = null, signal = null, tone = 0, route } = {}) {
     const s = getSettings();
     const sealsIn = [...sealedChunk.matchAll(SEAL_RX)].map(m => Number(m[1]));
 
     const attempt = async (extraNote) => {
-        const user = buildUserPrompt(sealedChunk, srcCode, dstCode, { contextLines, extraNote, ownerChatId });
+        const user = buildUserPrompt(sealedChunk, srcCode, dstCode, { contextLines, extraNote, ownerChatId, tone });
         bumpStats('calls');
         bumpStats('chars', sealedChunk.length);
-        const raw = await callTranslator(sys, user, { signal });
+        bumpStats('sent', sys.length + user.length);
+        if (extraNote) bumpStats('retries');
+        const raw = await callTranslator(sys, user, { signal, route });
+        bumpStats('got', String(raw ?? '').length);
         return tidyOutput(raw, sealedChunk);
     };
 
@@ -1311,7 +1356,7 @@ async function toggleCodeBlock(mesId, index) {
 }
 
 /** 수신(AI 응답) 메시지 번역: 모델어 → 감상어 */
-async function translateIncoming(mesId, { force = false, fresh = false, previous = null } = {}) {
+async function translateIncoming(mesId, { force = false, fresh = false, previous = null, tone } = {}) {
     const s = getSettings();
     const message = chat[mesId];
     if (!message || isSwipeGenerating(mesId)) return false;
@@ -1319,6 +1364,11 @@ async function translateIncoming(mesId, { force = false, fresh = false, previous
 
     const source = String(message.mes || '');
     if (!source.trim()) return false;
+    // 이 메시지에만 쓰는 결 (0이면 설정의 결)
+    if (tone !== undefined) {
+        if (tone >= 1 && tone <= 5) message.extra.interpres_tone = tone; else delete message.extra.interpres_tone;
+    }
+    const useTone = Number(message.extra.interpres_tone) || 0;
 
     if (force) {
         // 사용자가 명시적으로 시켰다 — 원문 보기 선택을 해제한다
@@ -1359,7 +1409,7 @@ async function translateIncoming(mesId, { force = false, fresh = false, previous
     });
     let error = null;
     try {
-        let translated = await translateText(source, s.storyLang, s.viewLang, { mesId: Number(mesId), fresh, job });
+        let translated = await translateText(source, s.storyLang, s.viewLang, { mesId: Number(mesId), fresh, job, tone: useTone });
         job.check();
         translated = restoreMedia(translated, keepMedia, source);
         attachTranslation(message, source, translated, { keepPicks: !fresh });
@@ -1516,6 +1566,7 @@ async function clearAllTranslations() {
             delete m.extra.interpres_media;
             delete m.extra.interpres_keep;
             delete m.extra.interpres_code;
+            delete m.extra.interpres_tone;
         }
     }
     await getContext().saveChat();
@@ -1529,7 +1580,7 @@ async function clearCache() {
     store.blocks = {};
     store.wholes = {};
     store.partials = {};
-    store.stats = { calls: 0, hits: 0, chars: 0 };
+    store.stats = newStats();
     persistStore();
     updateStatsUI();
     toastr.success('번역 기억을 비웠습니다.');
@@ -1543,17 +1594,68 @@ async function openComparePopup(mesId) {
     const message = chat[mesId];
     if (!message) return;
     const orig = String(message.mes || '');
-    const trans = plainDisplay(message);
+    let trans = plainDisplay(message);
+    const s = getSettings();
+    const TONES = ['설정대로', '직역 위주', '약간 직역', '균형', '약간 의역', '과감한 의역'];
+    const altName = listConnectionProfiles().find(p => p.id === s.compareProfileId)?.name || '현재 API';
 
-    const esc = (t) => $('<div>').text(t).html();
     const $dlg = $(`
     <div class="interp-compare">
         <h3>원문 · 번역 <small>#${mesId}</small></h3>
-        <label>원문 <small>모델이 읽는 글 — 고치면 바뀐 문단만 다시 번역합니다</small></label>
-        <textarea class="text_pole interp-compare__orig" rows="8">${esc(orig)}</textarea>
-        <label>번역 <small>고친 문단은 번역 기억에 남아 다음에도 그대로 쓰입니다</small></label>
-        <textarea class="text_pole interp-compare__trans" rows="8">${esc(trans)}</textarea>
+        <label>원문</label>
+        <textarea class="text_pole interp-compare__orig" rows="8" title="모델이 읽는 글. 고치면 바뀐 문단만 다시 번역합니다."></textarea>
+        <label>번역</label>
+        <textarea class="text_pole interp-compare__trans" rows="8" title="고친 문단은 번역 기억에 남아 다음에도 그대로 쓰입니다."></textarea>
+        <div class="interp-compare__bar">
+            <select class="text_pole interp-compare__tone" title="이 메시지에만 쓸 번역 결"></select>
+            <button type="button" class="menu_button interp-compare__redo" title="고른 결로 처음부터 다시 번역합니다">다시 번역</button>
+            <button type="button" class="menu_button interp-compare__alt" title="다른 모델로 한 번 더 번역해 나란히 봅니다">비교</button>
+        </div>
+        <div class="interp-compare__second" style="display:none">
+            <label>비교 <small></small></label>
+            <textarea class="text_pole interp-compare__other" rows="8" readonly></textarea>
+            <div class="interp-compare__bar">
+                <button type="button" class="menu_button interp-compare__use" title="위 번역 칸을 이 번역으로 바꿉니다. 저장을 눌러야 반영됩니다.">이걸로</button>
+            </div>
+        </div>
     </div>`);
+    $dlg.find('.interp-compare__orig').val(orig);
+    $dlg.find('.interp-compare__trans').val(trans);
+    const $tone = $dlg.find('.interp-compare__tone');
+    TONES.forEach((name, i) => $tone.append($("<option>").val(i).text(`결: ${name}`)));
+    $tone.val(Number(message.extra?.interpres_tone) || 0);
+    $dlg.find('.interp-compare__alt').toggle(Boolean(s.compareEnabled));
+    $dlg.find('.interp-compare__second small').text(altName);
+
+    const stale = () => chat[mesId] !== message || String(message.mes || '') !== orig;
+    const busy = ($btn, on) => $btn.prop('disabled', on).toggleClass('disabled', on);
+    $dlg.find('.interp-compare__redo').on('click', async function () {
+        if (stale()) return;
+        const $btn = $(this);
+        busy($btn, true);
+        try {
+            const ok = await translateIncoming(mesId, { force: true, fresh: true, tone: Number($tone.val()) || 0 });
+            if (ok && !stale()) {
+                trans = plainDisplay(message);
+                $dlg.find('.interp-compare__trans').val(trans);
+            }
+        } finally { busy($btn, false); }
+    });
+    $dlg.find('.interp-compare__alt').on('click', async function () {
+        if (stale()) return;
+        const $btn = $(this);
+        busy($btn, true);
+        try {
+            const other = await translateAlt(orig, s.storyLang, s.viewLang, { mesId: Number(mesId), tone: Number($tone.val()) || 0 });
+            $dlg.find('.interp-compare__other').val(other);
+            $dlg.find('.interp-compare__second').show();
+        } catch (e) {
+            toastr.error(String(e.message || e), '비교 번역 실패');
+        } finally { busy($btn, false); }
+    });
+    $dlg.find('.interp-compare__use').on('click', () => {
+        $dlg.find('.interp-compare__trans').val($dlg.find('.interp-compare__other').val());
+    });
 
     const result = await callGenericPopup($dlg, POPUP_TYPE.CONFIRM, '', {
         okButton: '저장', cancelButton: '닫기', wide: true,
@@ -1564,7 +1666,6 @@ async function openComparePopup(mesId) {
         toastr.warning('그사이 메시지가 바뀌어 저장하지 않았습니다.', 'Interpres');
         return;
     }
-    const s = getSettings();
     const newOrig = String($dlg.find('.interp-compare__orig').val() ?? '');
     const edited = String($dlg.find('.interp-compare__trans').val() ?? '');
     if (typeof message.extra !== 'object') message.extra = {};
@@ -1662,35 +1763,88 @@ async function scanVoiceCards() {
     }
 }
 
+/** 자료에서 용어를 뽑아 용어집에 없는 것만 덧붙인다. 반환: 추가한 수 (-1이면 모델이 아무것도 못 뽑음) */
+async function harvestTerms(material, owner) {
+    const s = getSettings();
+    const known = getBook().glossary.map(g => g.src).filter(Boolean);
+    const skip = known.length ? `\n\nAlready on the sheet — do not list these again:\n${known.slice(-300).join(', ')}` : '';
+    const sys = `${TERM_SCAN_PROMPT}\n\nSource language: ${langName(s.storyLang)}. Target language: ${langName(s.viewLang)}.${skip}`;
+    const raw = await callTranslator(sys, material, { maxTokens: 2048, usePrefill: false });
+    assertCurrentBook(owner);
+    const json = parseJsonLoose(raw);
+    if (!Array.isArray(json?.terms)) return -1;
+    const book = getBook();
+    let added = 0;
+    for (const t of json.terms) {
+        const src = String(t.src || '').trim();
+        const dst = String(t.dst || '').trim();
+        if (!src || !dst || src === dst && src.length < 2) continue;
+        if (book.glossary.some(g => g.src === src)) continue;
+        book.glossary.push({ id: uuidv4(), src, dst });
+        added++;
+    }
+    if (added) {
+        renderGlossary();
+        await persistBook();
+    }
+    return added;
+}
+
 async function scanGlossary() {
     let owner;
     try { owner = captureBook(); } catch (e) { toastr.warning(e.message); return; }
-    const s = getSettings();
     const material = collectScanMaterial();
     if (!material.trim()) { toastr.warning('스캔할 캐릭터/대화 자료가 없습니다.'); return; }
     toastr.info('용어를 수집하는 중…', 'Interpres');
     try {
-        const sys = `${TERM_SCAN_PROMPT}\n\nTarget language: ${langName(s.viewLang)}.`;
-        const raw = await callTranslator(sys, material, { maxTokens: 2048, usePrefill: false });
-        assertCurrentBook(owner);
-        const json = parseJsonLoose(raw);
-        const terms = Array.isArray(json?.terms) ? json.terms : [];
-        if (!terms.length) { toastr.warning('용어를 추출하지 못했습니다.'); return; }
-        const book = getBook();
-        let added = 0;
-        for (const t of terms) {
-            const src = String(t.src || '').trim();
-            const dst = String(t.dst || '').trim();
-            if (!src || !dst) continue;
-            if (book.glossary.some(g => g.src === src)) continue;
-            book.glossary.push({ id: uuidv4(), src, dst });
-            added++;
-        }
-        renderGlossary();
-        await persistBook();
+        const added = await harvestTerms(material, owner);
+        if (added < 0) { toastr.warning('용어를 추출하지 못했습니다.'); return; }
         toastr.success(`용어 ${added}개 추가 (중복 제외)`, 'Interpres');
     } catch (e) {
         toastr.error(String(e.message || e), '용어 스캔 실패');
+    }
+}
+
+/** 마지막으로 훑은 뒤 쌓인 답변 (아직 훑은 적 없으면 최근 것만) */
+function termScanWindow(every) {
+    const store = getStore();
+    const at = Number.isInteger(store.termScanAt) ? Math.min(store.termScanAt, chat.length) : -1;
+    const isReply = (m) => m && !m.is_user && !m.is_system;
+    if (at < 0) {
+        // 처음 켠 채팅: 지난 대화를 통째로 보내지 않고 최근 답변부터 센다
+        let seen = 0, from = chat.length;
+        while (from > 0 && seen < every) { from--; if (isReply(chat[from])) seen++; }
+        return { from, replies: seen };
+    }
+    return { from: at, replies: chat.slice(at).filter(isReply).length };
+}
+
+let termScanBusy = false;
+/** 답변이 정해 둔 수만큼 쌓이면 새 용어만 조용히 덧붙인다. 호출은 그때 한 번. */
+async function autoGlossary(mesId) {
+    const s = getSettings();
+    if (!s.autoGlossary || termScanBusy || mesId !== chat.length - 1) return 0;
+    const every = Math.max(3, Math.min(50, Math.round(Number(s.autoGlossaryEvery) || 10)));
+    const { from, replies } = termScanWindow(every);
+    if (replies < every) return 0;
+    let owner;
+    try { owner = captureBook(); } catch { return 0; }
+    const lines = chat.slice(from).filter(m => !m.is_system).map(m => `${m.name}: ${String(m.mes || '').slice(0, 1200)}`);
+    const material = lines.join('\n').slice(-9000);
+    if (!material.trim()) return 0;
+    termScanBusy = true;
+    // 실패해도 같은 구간을 답변마다 다시 부르지 않게 먼저 찍어 둔다
+    getStore().termScanAt = chat.length;
+    persistStore();
+    try {
+        const added = await harvestTerms(material, owner);
+        if (added > 0) toastr.info(`새 용어 ${added}개를 용어집에 넣었습니다.`, 'Interpres', { timeOut: 3000 });
+        return Math.max(0, added);
+    } catch (e) {
+        if (!isCancel(e)) console.warn(`[${MODULE_NAME}] 용어 자동 갱신 실패`, e);
+        return 0;
+    } finally {
+        termScanBusy = false;
     }
 }
 
@@ -1710,7 +1864,7 @@ function decorateMessages() {
         const hasTrans = Boolean(chat[Number($mes.attr('mesid'))]?.extra?.display_text);
         if (hasTrans) {
             if (!$extra.find('.interp_cmp_btn').length) {
-                $extra.prepend('<div title="원문·번역 대조/편집 (Interpres)" class="mes_button interp_cmp_btn fa-solid fa-scale-balanced"></div>');
+                $extra.prepend('<div title="원문·번역 대조, 고치기, 결 바꾸기 (Interpres)" class="mes_button interp_cmp_btn fa-solid fa-scale-balanced"></div>');
             }
             if (!$extra.find('.interp_redo_btn').length) {
                 $extra.prepend('<div title="재번역 (Interpres) — 캐시를 무시하고 처음부터 다시 번역" class="mes_button interp_redo_btn fa-solid fa-arrows-rotate"></div>');
@@ -1751,11 +1905,32 @@ function decorateCodeBlocks($mes) {
  * 설정 UI
  * ============================================================ */
 
-function updateStatsUI() {
-    const st = getStore().stats;
+function shortCount(n) {
+    n = Number(n) || 0;
+    if (n < 1000) return String(n);
+    if (n < 1e6) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+    return `${(n / 1e6).toFixed(1)}M`;
+}
+
+/** 이 채팅의 번역 현황 숫자들 */
+function statCells(st) {
     const total = (st.calls || 0) + (st.hits || 0);
-    const rate = total ? Math.round((st.hits / total) * 100) : 0;
-    $('#interp_stats').text(`LLM 호출 ${st.calls || 0}회 · 캐시 적중 ${st.hits || 0}회 (${rate}%) · 누적 ${Math.round((st.chars || 0) / 1000)}k자`);
+    const rate = total ? Math.round(((st.hits || 0) / total) * 100) : 0;
+    return [
+        ['호출', shortCount(st.calls), '번역 모델을 부른 횟수 (재시도 포함)'],
+        ['재사용', `${shortCount(st.hits)} · ${rate}%`, '모델을 부르지 않고 번역 기억으로 끝낸 횟수'],
+        ['보낸 글자', shortCount(st.sent || st.chars), '프롬프트·용어집·문맥까지 합쳐 모델에 보낸 양'],
+        ['받은 글자', shortCount(st.got), '모델이 돌려준 양'],
+        ['아낀 글자', shortCount(st.saved), '번역 기억 덕에 다시 보내지 않은 원문'],
+        ['재시도', shortCount(st.retries), '형식 검증에 걸려 한 번 더 부른 횟수'],
+    ];
+}
+
+function updateStatsUI() {
+    const $box = $('#interp_stats').empty();
+    for (const [label, value, hint] of statCells(getStore().stats)) {
+        $box.append($('<div class="interp__stat">').attr('title', hint).append($('<b>').text(value), $('<span>').text(label)));
+    }
 }
 
 /** 다른 챗방/구버전 전역에서 딸려온 목록 안내 — 사용자가 누르기 전엔 번역에 쓰이지 않는다 */
@@ -1784,7 +1959,7 @@ function renderGlossary() {
     renderCarryNotice();
     const $list = $('#interp_glossary_list').empty();
     if (!book.glossary.length) {
-        $list.append('<div class="interp__empty">등록된 용어가 없습니다. 직접 추가하거나 자동 수집을 눌러보세요. (용어집은 챗방별로 저장됩니다)</div>');
+        $list.append('<div class="interp__empty">용어 없음</div>');
         return;
     }
     for (const g of book.glossary) {
@@ -1805,7 +1980,7 @@ function renderVoiceCards() {
     const book = getBook();
     const $list = $('#interp_voice_list').empty();
     if (!book.voiceCards.length) {
-        $list.append('<div class="interp__empty">말투 카드가 없습니다. "말투 스캔"으로 캐릭터의 어투를 자동 분석할 수 있습니다. (말투 카드는 챗방별로 저장됩니다)</div>');
+        $list.append('<div class="interp__empty">말투 카드 없음</div>');
         return;
     }
     for (const v of book.voiceCards) {
@@ -1830,6 +2005,12 @@ function refreshProfileOptions() {
         $sel.append($('<option>').val(p.id).text(p.name || p.id));
     }
     $sel.val(getSettings().profileId || '');
+    const $cmp = $('#interp_compare_profile').empty();
+    $cmp.append('<option value="">현재 연결된 API</option>');
+    for (const p of listConnectionProfiles()) {
+        $cmp.append($('<option>').val(p.id).text(p.name || p.id));
+    }
+    $cmp.val(getSettings().compareProfileId || '');
 }
 
 function syncUIFromSettings() {
@@ -1854,6 +2035,10 @@ function syncUIFromSettings() {
     $('#interp_context_pairs').val(s.contextPairs);
     $('#interp_seal_tags').val(s.sealTags);
     $('#interp_reader_note').val(s.readerNote);
+    $('#interp_auto_glossary').prop('checked', Boolean(s.autoGlossary));
+    $('#interp_auto_glossary_every').val(s.autoGlossaryEvery ?? 10);
+    $('#interp_compare_on').prop('checked', Boolean(s.compareEnabled));
+    $('.interp__compare-row').toggle(Boolean(s.compareEnabled));
     $('#interp_prompt_template').val(s.promptTemplate || DEFAULT_PROMPT_TEMPLATE);
     $('#interp_api_mode').val(s.apiMode);
     $('#interp_tokens').val(s.responseTokens);
@@ -1910,6 +2095,14 @@ function bindUI() {
     $('#interp_context_pairs').on('change', function () { s().contextPairs = Math.max(0, Math.min(6, Number(this.value) || 0)); save(); });
     $('#interp_seal_tags').on('change', function () { s().sealTags = this.value; save(); });
     $('#interp_reader_note').on('change', function () { s().readerNote = this.value; save(); });
+    $('#interp_auto_glossary').on('change', function () { s().autoGlossary = this.checked; save(); });
+    $('#interp_auto_glossary_every').on('change', function () { s().autoGlossaryEvery = Math.max(3, Math.min(50, Math.round(Number(this.value) || 10))); this.value = s().autoGlossaryEvery; save(); });
+    $('#interp_compare_on').on('change', function () {
+        s().compareEnabled = this.checked; save();
+        $('.interp__compare-row').toggle(this.checked);
+        if (this.checked) refreshProfileOptions();
+    });
+    $('#interp_compare_profile').on('change', function () { s().compareProfileId = this.value; save(); });
     $('#interp_prompt_template').on('change', function () {
         const v = String(this.value ?? '');
         // 기본 틀 그대로면 저장하지 않아 이후 기본 프롬프트 개선을 자동으로 따라간다
@@ -2249,7 +2442,8 @@ function bindEvents() {
         decorateMessages();
         const st = getSettings();
         if (!st.enabled || !st.autoIn) return;
-        await translateIncoming(mesId);
+        const done = await translateIncoming(mesId);
+        if (done) autoGlossary(Number(mesId));   // 기다리지 않는다 — 번역 표시와 상관없는 뒷일
     });
 
     eventSource.makeFirst(event_types.USER_MESSAGE_RENDERED, async (mesId) => {
@@ -2271,6 +2465,7 @@ function bindEvents() {
             delete m.extra.interpres_src;
             delete m.extra.interpres_media;
             delete m.extra.interpres_keep;   // 다른 답변의 그림을 새 답변에 얹지 않는다
+            delete m.extra.interpres_tone;
             delete m.extra.interpres_code;
         }
         dropJob(`in:${mesId}`);            // 다른 답변을 번역하던 작업은 버린다

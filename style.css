@@ -1,222 +1,144 @@
-/* ============================================================
- * Interpres — 이야기 통역사
- * ============================================================ */
+/* Interpres */
 
 .interp {
-    --interp-accent: var(--SmartThemeQuoteColor, #7aa2f7);
-    --interp-border: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 18%, transparent);
-    --interp-soft: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 6%, transparent);
+    --interp-line: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 16%, transparent);
+    --interp-dim: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 62%, transparent);
+    --interp-fill: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 7%, transparent);
 }
 
-/* 코어의 .menu_button은 width: min-content라 한글이 세로로 쪼개진다 — 전부 보정 */
-#interp_settings .menu_button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 7px;
-    white-space: nowrap;
-    width: fit-content;
-    padding: 5px 11px;
-    font-size: 0.84em;
-    margin: 0;
-}
-
-#interp_settings .menu_button i { margin: 0; }
-
-.interp__version {
-    font-size: 0.72em;
-    font-weight: 600;
-    opacity: 0.65;
-    margin-left: 6px;
-    padding: 1px 7px;
-    border: 1px solid var(--interp-border);
-    border-radius: 999px;
-    vertical-align: middle;
-}
-
-/* ---------- 탭 ---------- */
-
-.interp__tabs {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    margin: 10px 0 0;
-}
-
-.interp__tab {
+/* 코어의 .menu_button은 width: min-content라 한글이 세로로 쪼개진다 */
+#interp_settings .menu_button,
+.interp-compare .menu_button {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 7px 12px;
-    border: 1px solid var(--interp-border);
-    border-bottom: none;
-    border-radius: 8px 8px 0 0;
-    background: transparent;
-    color: inherit;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+    padding: 4px 12px;
     font-size: 0.85em;
+    line-height: 1.5;
+    white-space: nowrap;
+}
+#interp_settings .menu_button i { margin: 0; }
+
+.interp__version { margin-left: 4px; font-size: 0.75em; font-weight: 400; opacity: 0.55; }
+
+/* 탭 */
+.interp__tabs {
+    display: flex;
+    gap: 2px;
+    margin: 8px 0 0;
+    border-bottom: 1px solid var(--interp-line);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.interp__tabs::-webkit-scrollbar { display: none; }
+.interp__tab {
+    flex: none;
+    padding: 7px 12px;
+    margin-bottom: -1px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--interp-dim);
+    font: inherit;
+    font-size: 0.9em;
+    white-space: nowrap;
     cursor: pointer;
-    opacity: 0.7;
-    transition: opacity 0.15s ease, background 0.15s ease;
 }
+.interp__tab:hover { color: inherit; }
+.interp__tab.is-active { color: inherit; font-weight: 600; border-bottom-color: currentColor; }
 
-.interp__tab:hover { opacity: 1; }
+.interp__panel { display: none; padding: 12px 2px 4px; }
+.interp__panel.is-active { display: flex; flex-direction: column; gap: 10px; }
+.interp__panel > * { min-width: 0; }
 
-.interp__tab.is-active {
-    opacity: 1;
-    background: var(--interp-soft);
-    border-color: var(--interp-accent);
-    box-shadow: inset 0 2px 0 var(--interp-accent);
-}
-
-.interp__panel {
-    display: none;
-    padding: 12px;
-    border: 1px solid var(--interp-border);
-    border-radius: 0 8px 8px 8px;
-    background: var(--interp-soft);
-}
-
-.interp__panel.is-active {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-}
-
-/* ---------- 필드 ---------- */
-
-.interp__field { display: flex; flex-direction: column; gap: 4px; }
-.interp__field > label { font-size: 0.85em; font-weight: 600; }
-.interp__field > label small { font-weight: 400; opacity: 0.65; margin-left: 4px; }
-.interp__field--btn { justify-content: flex-end; }
-
-.interp__grid2 {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
-
-.interp .checkbox_label small { opacity: 0.65; }
-
-.interp__dial-ends {
-    display: flex;
-    justify-content: space-between;
-    font-size: 0.75em;
-    opacity: 0.6;
-}
-
-.interp__hint {
-    font-size: 0.8em;
-    line-height: 1.55;
-    opacity: 0.75;
-    padding: 8px 10px;
-    border-left: 3px solid var(--interp-accent);
-    border-radius: 4px;
-    background: var(--interp-soft);
-}
-
-.interp__hint code {
-    padding: 0 4px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--SmartThemeBodyColor, #ccc) 12%, transparent);
-}
-
-/* ---------- 섹션 헤더 ---------- */
+/* 묶음 제목 */
+.interp__h,
+.interp__section-head h4 { margin: 0; font-size: 0.8em; font-weight: 600; color: var(--interp-dim); }
+.interp__h { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--interp-line); }
 
 .interp__section-head {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 10px;
     flex-wrap: wrap;
-    margin-top: 4px;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--interp-line);
 }
+.interp__panel > .interp__section-head:first-child,
+#interp_carry_notice + .interp__section-head { margin-top: 0; padding-top: 0; border-top: 0; }
+.interp__actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
-.interp__section-head h4 { margin: 0 0 2px; }
-.interp__section-head p { margin: 0; font-size: 0.8em; opacity: 0.65; }
+/* 입력 */
+.interp__field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.interp__field > label { font-size: 0.88em; overflow-wrap: anywhere; }
+.interp__field > label > b { margin-left: 6px; font-weight: 600; }
+#interp_settings .interp__field label small { display: block; color: var(--interp-dim); font-size: 0.9em; line-height: 1.45; }
+.interp__field .text_pole { margin: 0; }
+.interp__field--btn { justify-content: flex-end; align-items: flex-start; }
+.interp__grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 
-.interp__actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+/* 체크박스 줄: 이름 아래에 설명 */
+#interp_settings .checkbox_label { display: flex; align-items: flex-start; gap: 8px; margin: 0; min-width: 0; }
+#interp_settings .checkbox_label > input { flex: none; margin-top: 0.3em; }
+#interp_settings .checkbox_label > span { min-width: 0; overflow-wrap: anywhere; font-size: 0.92em; }
+#interp_settings .checkbox_label > span small { display: block; color: var(--interp-dim); font-size: 0.9em; line-height: 1.45; }
 
-/* ---------- 용어집 ---------- */
+.interp__inline { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.interp__inline > .checkbox_label { flex: 1 1 200px; }
+.interp__every { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85em; white-space: nowrap; color: var(--interp-dim); }
+.interp__every .text_pole { width: 4.5em; margin: 0; }
 
+.interp__dial-ends { display: flex; justify-content: space-between; font-size: 0.78em; color: var(--interp-dim); }
+
+.interp__note { margin: 0; font-size: 0.82em; line-height: 1.6; color: var(--interp-dim); overflow-wrap: anywhere; }
+.interp__note code { padding: 0 4px; border-radius: 3px; background: var(--interp-fill); font-size: 0.95em; }
+
+/* 접는 묶음 */
+.interp__fold { margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--interp-line); }
+.interp__fold > summary { cursor: pointer; font-size: 0.88em; }
+.interp__fold[open] > summary { margin-bottom: 10px; }
+.interp__fold > * + * { margin-top: 8px; }
+
+/* 용어집 · 말투 카드 */
 .interp__list { display: flex; flex-direction: column; gap: 6px; }
+.interp__empty { padding: 6px 0; font-size: 0.85em; color: var(--interp-dim); }
+.interp__row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.interp__row .text_pole { flex: 1 1 0; min-width: 0; margin: 0; }
+.interp__arrow { flex: none; opacity: 0.4; font-size: 0.8em; }
+#interp_settings .interp__del { flex: none; width: 30px; height: 30px; padding: 0; opacity: 0.6; }
+#interp_settings .interp__del:hover { opacity: 1; }
+.interp__voice { display: flex; flex-direction: column; gap: 6px; }
+.interp__voice + .interp__voice { padding-top: 8px; border-top: 1px dashed var(--interp-line); }
+.interp__voice-head { display: flex; align-items: center; gap: 6px; }
+.interp__voice-head .text_pole { flex: 1 1 0; min-width: 0; margin: 0; }
+.interp__voice .interp__vstyle { margin: 0; resize: vertical; }
 
-/* 다른 챗방·구버전 전역에서 딸려온 목록 격리 안내 */
 .interp__carry {
     display: flex;
     align-items: center;
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
-    margin: 10px 0 0;
-    padding: 10px 12px;
-    border: 1px solid var(--interp-accent);
-    border-radius: 8px;
-    background: var(--interp-soft);
-}
-
-.interp__carry-text { font-size: 0.82em; line-height: 1.5; flex: 1 1 220px; }
-
-.interp__empty {
-    font-size: 0.82em;
-    opacity: 0.6;
-    text-align: center;
-    padding: 14px 8px;
-    border: 1px dashed var(--interp-border);
-    border-radius: 8px;
-}
-
-.interp__row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.interp__row .text_pole { flex: 1; min-width: 0; margin: 0; }
-.interp__arrow { opacity: 0.5; flex-shrink: 0; }
-
-#interp_settings .interp__del {
-    flex-shrink: 0;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-}
-
-/* ---------- 말투 카드 ---------- */
-
-.interp__voice {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 8px;
-    border: 1px solid var(--interp-border);
-    border-radius: 8px;
-}
-
-.interp__voice-head { display: flex; align-items: center; gap: 6px; }
-.interp__voice-head .text_pole { flex: 1; margin: 0; }
-.interp__voice .interp__vstyle { margin: 0; resize: vertical; }
-
-/* ---------- 도구 ---------- */
-
-.interp__tools {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 8px;
-}
-
-#interp_settings .interp__tools .menu_button {
-    width: auto;
-    padding: 9px 6px;
-}
-
-.interp__stats {
-    font-size: 0.85em;
+    margin-bottom: 12px;
     padding: 8px 10px;
-    border: 1px solid var(--interp-border);
-    border-radius: 8px;
+    border: 1px solid var(--interp-line);
+    border-radius: 6px;
 }
+.interp__carry-text { flex: 1 1 220px; font-size: 0.85em; line-height: 1.5; }
 
-/* ---------- 번역 프롬프트 편집 ---------- */
+/* 도구 */
+.interp__tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.interp__progress { font-size: 0.85em; color: var(--interp-dim); }
+.interp__stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border: 1px solid var(--interp-line); border-radius: 6px; overflow: hidden; background: var(--interp-line); }
+.interp__stat { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px; min-width: 0; background: var(--SmartThemeBlurTintColor, #222); }
+.interp__stat b { font-size: 1.05em; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.interp__stat span { font-size: 0.78em; color: var(--interp-dim); }
 
 .interp__prompt {
     width: 100%;
@@ -228,27 +150,9 @@
     white-space: pre;
 }
 
-/* ---------- 메시지 버튼 ---------- */
+.interp_msg_btn, .interp_cmp_btn, .interp_redo_btn { cursor: pointer; }
 
-.interp_msg_btn, .interp_cmp_btn { cursor: pointer; }
-.interp_msg_btn.fa-hourglass-half { opacity: 0.9; }
-
-/* ---------- 대조 팝업 ---------- */
-
-.interp-compare {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    text-align: left;
-}
-
-.interp-compare h3 { margin: 0 0 4px; }
-.interp-compare h3 small { opacity: 0.55; font-weight: 400; }
-.interp-compare label { font-size: 0.82em; font-weight: 600; opacity: 0.8; }
-.interp-compare textarea { width: 100%; resize: vertical; }
-
-/* ---------- 자료 덤프 (/interp-book) ---------- */
-
+/* /interp-book */
 .interp__dump {
     max-height: 60vh;
     overflow: auto;
@@ -257,28 +161,11 @@
     text-align: left;
     font-size: 0.85em;
     line-height: 1.5;
-    opacity: 0.9;
 }
 
-/* ---------- 모바일 ---------- */
-
-.interp__transfer {
-    border: 1px solid var(--interp-border);
-    border-radius: 8px;
-    padding: 12px;
-    margin-bottom: 16px;
-}
-.interp__transfer h4 { margin: 0 0 6px; }
-.interp__transfer p { font-size: 0.85em; opacity: 0.8; }
-.interp__transfer select { width: 100%; margin-top: 4px; }
-.interp__transfer .interp__actions { margin-top: 10px; flex-wrap: wrap; }
-
-@media (max-width: 600px) {
-    .interp__grid2 { grid-template-columns: 1fr; }
-    .interp__tab span { display: none; }
-    .interp__tab { padding: 8px 12px; }
-    .interp__section-head { flex-direction: column; }
-    .interp__tools { grid-template-columns: 1fr 1fr; }
+@media (max-width: 480px) {
+    .interp__grid2 { grid-template-columns: minmax(0, 1fr); }
+    .interp__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ============================================================
@@ -312,17 +199,14 @@
 #interp_composer:hover, #interp_composer:focus-visible { opacity: 1; }
 #interp_composer.is-busy { opacity: 1; }
 
-.interp-compare { text-align: left; display: grid; gap: 6px; }
-.interp-compare h3 { margin: 0 0 4px; }
-.interp-compare label { font-weight: 600; overflow-wrap: anywhere; }
-.interp-compare label small { display: block; font-weight: 400; opacity: .7; }
-.interp-compare textarea { width: 100%; box-sizing: border-box; min-width: 0; resize: vertical; }
+/* 대조 창 */
+.interp-compare { display: grid; gap: 6px; text-align: left; min-width: 0; }
+.interp-compare h3 { margin: 0 0 4px; font-size: 1.05em; }
+.interp-compare h3 small { font-weight: 400; opacity: 0.55; }
+.interp-compare label { font-size: 0.85em; font-weight: 600; opacity: 0.8; }
+.interp-compare label small { margin-left: 6px; font-weight: 400; opacity: 0.75; }
+.interp-compare textarea { width: 100%; box-sizing: border-box; min-width: 0; margin: 0; resize: vertical; }
+.interp-compare__bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.interp-compare__bar select { flex: 0 1 11em; width: auto; min-width: 0; margin: 0; }
+.interp-compare__second { display: grid; gap: 6px; margin-top: 6px; }
 #interp_jobs:empty, #interp_batch_progress:empty { display: none; }
-
-/* 체크박스 줄 — 테마가 .checkbox_label을 어떻게 두든 한 줄에 하나씩, 설명은 이름 아래로 */
-#interp_settings .checkbox_label { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; min-width: 0; }
-#interp_settings .checkbox_label > input { flex: none; margin-top: 0.3em; }
-#interp_settings .checkbox_label > span { min-width: 0; overflow-wrap: anywhere; }
-#interp_settings .checkbox_label > span small { display: block; opacity: 0.7; line-height: 1.45; }
-#interp_settings .interp__field label small { display: block; opacity: 0.7; font-weight: 400; overflow-wrap: anywhere; }
-#interp_settings .interp__field { min-width: 0; }

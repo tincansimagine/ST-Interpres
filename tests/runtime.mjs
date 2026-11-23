@@ -42,7 +42,7 @@ export async function runtime({ translate } = {}) {
         $: () => fake, jQuery: () => {}, toastr: { success() {}, info() {}, warning() {}, error() {} },
     });
     vm.runInContext(source, context, { filename: 'index.js' });
-    const api = vm.runInContext('({ getSettings, getStore, translateText, translateIncoming, toggleCodeBlock, learnEdits, sealText, attachTranslation, plainDisplay, jobs, requests })', context);
+    const api = vm.runInContext('({ getSettings, getStore, translateText, translateIncoming, toggleCodeBlock, learnEdits, sealText, attachTranslation, plainDisplay, jobs, requests, translateAlt, autoGlossary, statCells, getBook })', context);
     return { ...api, context, calls, redrawn, chat: context.chat, run: (code) => vm.runInContext(code, context) };
 }
 
