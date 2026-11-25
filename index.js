@@ -1334,7 +1334,36 @@ function plainDisplay(message) {
 }
 
 /** 메시지를 다시 그리고, 렌더러가 따로 그리는 HTML 화면이 있으면 렌더러도 다시 부른다 */
+/* 스와이프(그리팅 포함)로 왔다 갔다 해도 번역을 다시 받지 않도록, 답변별 번역 상태를 기억해 둔다.
+ * 키는 원문 해시라 같은 답변으로 돌아오면 그대로 꺼낸다. swipe_info에도 적어 두면 ST가 스와이프 때
+ * extra를 swipe_info에서 되살려 줄 때 함께 돌아오고, 저장된 챗에도 남는다. */
+const SWIPE_KEYS = ['display_text', 'interpres_original', 'interpres_src', 'interpres_media', 'interpres_keep', 'interpres_tone', 'interpres_code'];
+const swipeMemory = new WeakMap();
+function rememberSwipe(message) {
+    const ex = message?.extra;
+    if (!ex || message.is_user || !ex.interpres_src) return;
+    const snap = {};
+    for (const k of SWIPE_KEYS) if (ex[k] !== undefined) snap[k] = structuredClone(ex[k]);
+    let mem = swipeMemory.get(message);
+    if (!mem) swipeMemory.set(message, mem = new Map());
+    mem.set(ex.interpres_src, snap);
+    const info = Array.isArray(message.swipe_info) && Number.isInteger(message.swipe_id) ? message.swipe_info[message.swipe_id] : null;
+    if (info && typeof info === 'object') {
+        if (typeof info.extra !== 'object' || !info.extra) info.extra = {};
+        for (const k of SWIPE_KEYS) { if (k in snap) info.extra[k] = structuredClone(snap[k]); else delete info.extra[k]; }
+    }
+}
+function recallSwipe(message) {
+    const hash = getStringHash(String(message.mes || ''));
+    if (message.extra?.interpres_src === hash && (message.extra.display_text || message.extra.interpres_original)) return true;
+    const snap = swipeMemory.get(message)?.get(hash);
+    if (!snap) return false;
+    for (const k of SWIPE_KEYS) { if (k in snap) message.extra[k] = structuredClone(snap[k]); else delete message.extra[k]; }
+    return true;
+}
+
 async function redraw(mesId, message) {
+    rememberSwipe(message);
     updateMessageBlock(Number(mesId), message);
     decorateMessages();
     if (hasFrontendDocument(message.extra?.display_text || '')) {
@@ -2458,6 +2487,9 @@ function bindEvents() {
         if (!st.enabled || !st.autoIn) return;
         const m = chat[mesId];
         if (!m || m.is_user || m.is_system) return;
+        if (typeof m.extra !== 'object' || !m.extra) m.extra = {};
+        // 전에 번역해 둔 답변으로 돌아왔으면 다시 번역하지 않고 그대로 보여준다
+        if (recallSwipe(m)) { dropJob(`in:${mesId}`); await redraw(mesId, m); return; }
         // 스와이프로 본문이 바뀌었으니 이전 번역 표시도 원문 보기 선택도 무효
         if (m.extra) {
             delete m.extra.display_text;
